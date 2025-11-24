@@ -38,6 +38,7 @@ from openai.types import ReasoningEffort
 from openai.types.chat import ChatCompletionToolChoiceOptionParam, completion_create_params
 
 from .models import (
+    AzureFoundryModels,
     CerebrasChatModels,
     ChatModels,
     CometAPIChatModels,
@@ -229,6 +230,130 @@ class LLM(llm.LLM):
             safety_identifier=safety_identifier,
             prompt_cache_key=prompt_cache_key,
             top_p=top_p,
+        )
+
+    @staticmethod
+    def with_azure_foundry(
+        *,
+        model: str | AzureFoundryModels,
+        azure_endpoint: str | None = None,
+        api_key: str | None = None,
+        azure_ad_token: str | None = None,
+        azure_ad_token_provider: AsyncAzureADTokenProvider | None = None,
+        base_url: str | None = None,
+        user: NotGivenOr[str] = NOT_GIVEN,
+        safety_identifier: NotGivenOr[str] = NOT_GIVEN,
+        prompt_cache_key: NotGivenOr[str] = NOT_GIVEN,
+        temperature: NotGivenOr[float] = NOT_GIVEN,
+        parallel_tool_calls: NotGivenOr[bool] = NOT_GIVEN,
+        tool_choice: NotGivenOr[ToolChoice] = NOT_GIVEN,
+        timeout: httpx.Timeout | None = None,
+        top_p: NotGivenOr[float] = NOT_GIVEN,
+        verbosity: NotGivenOr[Verbosity] = NOT_GIVEN,
+    ) -> LLM:
+        """
+        Create an LLM instance using Azure AI Foundry serverless models.
+
+        Supports Claude (Anthropic) and Grok (xAI) models available through
+        Azure AI Foundry's Model Catalog with serverless API deployments.
+
+        Azure AI Foundry uses the Azure AI Model Inference API, which is
+        OpenAI-compatible and works with the OpenAI SDK.
+
+        This automatically infers the following arguments from their corresponding
+        environment variables if they are not provided:
+        - `api_key` from `AZURE_FOUNDRY_API_KEY` or `AZURE_OPENAI_API_KEY`
+        - `azure_ad_token` from `AZURE_OPENAI_AD_TOKEN`
+        - `azure_endpoint` from `AZURE_FOUNDRY_ENDPOINT`
+
+        Args:
+            model: Model name (e.g., "claude-sonnet-4-5", "grok-3")
+            azure_endpoint: Azure AI Foundry endpoint URL
+            api_key: Azure API key for authentication
+            azure_ad_token: Azure AD (Entra ID) token for authentication
+            azure_ad_token_provider: Azure AD token provider for automatic token refresh
+            base_url: Override base URL (defaults to azure_endpoint)
+            user: User identifier for tracking
+            temperature: Sampling temperature (0.0 to 2.0)
+            parallel_tool_calls: Enable parallel tool calling
+            tool_choice: Control tool selection behavior
+            timeout: HTTP timeout configuration
+            top_p: Nucleus sampling parameter
+            verbosity: Response verbosity level for reasoning models
+
+        Example:
+            ```python
+            import os
+            from livekit.plugins import openai
+
+            # Using Claude Sonnet via Azure AI Foundry
+            llm = openai.LLM.with_azure_foundry(
+                model="claude-sonnet-4-5",
+                azure_endpoint=os.environ["AZURE_FOUNDRY_ENDPOINT"],
+                api_key=os.environ["AZURE_FOUNDRY_API_KEY"],
+            )
+
+            # Using Grok via Azure AI Foundry
+            llm = openai.LLM.with_azure_foundry(
+                model="grok-3",
+                azure_endpoint=os.environ["AZURE_FOUNDRY_ENDPOINT"],
+                api_key=os.environ["AZURE_FOUNDRY_API_KEY"],
+            )
+            ```
+        """
+        # Try environment variables for missing parameters
+        api_key = (
+            api_key
+            or os.environ.get("AZURE_FOUNDRY_API_KEY")
+            or os.environ.get("AZURE_OPENAI_API_KEY")
+        )
+        azure_ad_token = azure_ad_token or os.environ.get("AZURE_OPENAI_AD_TOKEN")
+        azure_endpoint = azure_endpoint or os.environ.get("AZURE_FOUNDRY_ENDPOINT")
+
+        if not azure_endpoint:
+            raise ValueError(
+                "azure_endpoint is required for Azure Foundry. "
+                "Set AZURE_FOUNDRY_ENDPOINT environment variable or pass azure_endpoint parameter."
+            )
+
+        # Azure Foundry uses bearer token authentication
+        # Can use either API key or Azure AD token
+        if not api_key and not azure_ad_token and not azure_ad_token_provider:
+            raise ValueError(
+                "Authentication is required for Azure Foundry. "
+                "Provide api_key, azure_ad_token, or azure_ad_token_provider."
+            )
+
+        # Construct base URL from endpoint if not provided
+        if not base_url:
+            # Azure Foundry endpoints typically end with the model inference path
+            # Format: https://<host>.<region>.models.ai.azure.com
+            base_url = azure_endpoint.rstrip("/")
+            if not base_url.endswith("/v1"):
+                base_url = f"{base_url}/v1"
+
+        # Create OpenAI client configured for Azure Foundry
+        # Azure Foundry uses OpenAI-compatible API format
+        foundry_client = openai.AsyncClient(
+            api_key=api_key,
+            base_url=base_url,
+            max_retries=0,
+            timeout=timeout
+            if timeout
+            else httpx.Timeout(connect=15.0, read=5.0, write=5.0, pool=5.0),
+        )
+
+        return LLM(
+            model=model,
+            client=foundry_client,
+            user=user,
+            temperature=temperature,
+            parallel_tool_calls=parallel_tool_calls,
+            tool_choice=tool_choice,
+            safety_identifier=safety_identifier,
+            prompt_cache_key=prompt_cache_key,
+            top_p=top_p,
+            verbosity=verbosity,
         )
 
     @staticmethod

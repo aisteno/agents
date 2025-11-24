@@ -288,6 +288,32 @@ XAIChatModels = Literal[
     "grok-2-1212",
 ]
 
+# Azure AI Foundry Serverless Models
+AzureFoundryClaudeModels = Literal[
+    "claude-opus-4-1",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+    "claude-3-7-sonnet",
+    "claude-3-5-haiku",
+]
+
+AzureFoundryGrokModels = Literal[
+    "grok-3",
+    "grok-3-mini",
+]
+
+AzureFoundryModels = Literal[
+    # Claude models
+    "claude-opus-4-1",
+    "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+    "claude-3-7-sonnet",
+    "claude-3-5-haiku",
+    # Grok models
+    "grok-3",
+    "grok-3-mini",
+]
+
 
 def _supports_reasoning_effort(model: Union[ChatModels, str]) -> bool:
     return model in [

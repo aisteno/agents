@@ -27,6 +27,9 @@ from . import realtime
 from .embeddings import EmbeddingData, create_embeddings
 from .llm import LLM, LLMStream
 from .models import (
+    AzureFoundryClaudeModels,
+    AzureFoundryGrokModels,
+    AzureFoundryModels,
     OpenRouterProviderPreferences,
     OpenRouterWebPlugin,
     STTModels,
@@ -42,6 +45,9 @@ __all__ = [
     "TTS",
     "LLM",
     "LLMStream",
+    "AzureFoundryClaudeModels",
+    "AzureFoundryGrokModels",
+    "AzureFoundryModels",
     "OpenRouterProviderPreferences",
     "OpenRouterWebPlugin",
     "STTModels",
