@@ -22,7 +22,6 @@ try:
     from mcp.client.streamable_http import (
         GetSessionIdCallback,
         StreamableHTTPTransport,
-        create_mcp_http_client,
         streamablehttp_client,
     )
     from mcp.shared.message import SessionMessage
@@ -71,7 +70,8 @@ async def _post_only_streamablehttp_client(
         else sse_read_timeout
     )
 
-    client = create_mcp_http_client(
+    client = httpx.AsyncClient(
+        follow_redirects=True,
         headers=headers,
         timeout=httpx.Timeout(timeout_seconds, read=sse_read_timeout_seconds),
         auth=auth,
