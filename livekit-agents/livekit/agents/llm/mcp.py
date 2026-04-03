@@ -4,19 +4,27 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+import anyio
+import httpx
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 try:
     from mcp import ClientSession, stdio_client
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters
-    from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+    from mcp.client.streamable_http import (
+        GetSessionIdCallback,
+        StreamableHTTPTransport,
+        create_mcp_http_client,
+        streamablehttp_client,
+    )
     from mcp.shared.message import SessionMessage
 except ImportError as e:
     raise ImportError(
@@ -36,6 +44,64 @@ from .tool_context import (
 )
 
 MCPTool = RawFunctionTool
+
+
+@asynccontextmanager
+async def _post_only_streamablehttp_client(
+    url: str,
+    *,
+    headers: dict[str, Any] | None = None,
+    timeout: float | timedelta = 30,
+    sse_read_timeout: float | timedelta = 60 * 5,
+    terminate_on_close: bool = True,
+    auth: httpx.Auth | None = None,
+) -> AsyncIterator[
+    tuple[
+        MemoryObjectReceiveStream[SessionMessage | Exception],
+        MemoryObjectSendStream[SessionMessage],
+        GetSessionIdCallback,
+    ]
+]:
+    """Streamable HTTP client that skips the optional GET SSE server-push channel."""
+
+    timeout_seconds = timeout.total_seconds() if isinstance(timeout, timedelta) else timeout
+    sse_read_timeout_seconds = (
+        sse_read_timeout.total_seconds() if isinstance(sse_read_timeout, timedelta) else sse_read_timeout
+    )
+
+    client = create_mcp_http_client(
+        headers=headers,
+        timeout=httpx.Timeout(timeout_seconds, read=sse_read_timeout_seconds),
+        auth=auth,
+    )
+
+    read_stream_writer, read_stream = anyio.create_memory_object_stream[SessionMessage | Exception](0)
+    write_stream, write_stream_reader = anyio.create_memory_object_stream[SessionMessage](0)
+    transport = StreamableHTTPTransport(url)
+
+    async with client:
+        async with anyio.create_task_group() as tg:
+            try:
+                tg.start_soon(
+                    transport.post_writer,
+                    client,
+                    write_stream_reader,
+                    read_stream_writer,
+                    write_stream,
+                    lambda: None,
+                    tg,
+                )
+                yield (
+                    read_stream,
+                    write_stream,
+                    transport.get_session_id,
+                )
+            finally:
+                if transport.session_id and terminate_on_close:
+                    await transport.terminate_session(client)
+                tg.cancel_scope.cancel()
+                await read_stream_writer.aclose()
+                await write_stream.aclose()
 
 
 class MCPServer(ABC):
@@ -175,6 +241,9 @@ class MCPServerHTTP(MCPServer):
         headers: Optional HTTP headers to include in requests
         timeout: Connection timeout in seconds (default: 5)
         sse_read_timeout: SSE read timeout in seconds (default: 300)
+        enable_server_push: Whether to open the optional GET SSE channel used for
+            unsolicited server-to-client messages. Defaults to False because most
+            stateless MCP tool servers only need POST request/response traffic.
         client_session_timeout_seconds: Client session timeout in seconds (default: 5)
 
     Note: SSE transport is being deprecated in favor of streamable HTTP transport.
@@ -189,6 +258,7 @@ class MCPServerHTTP(MCPServer):
         headers: dict[str, Any] | None = None,
         timeout: float = 5,
         sse_read_timeout: float = 60 * 5,
+        enable_server_push: bool = False,
         client_session_timeout_seconds: float = 5,
     ) -> None:
         super().__init__(client_session_timeout_seconds=client_session_timeout_seconds)
@@ -196,6 +266,7 @@ class MCPServerHTTP(MCPServer):
         self.headers = headers
         self._timeout = timeout
         self._sse_read_timeout = sse_read_timeout
+        self._enable_server_push = enable_server_push
         self._allowed_tools = set(allowed_tools) if allowed_tools else None
 
         # Determine transport type: explicit > URL-based detection
@@ -234,6 +305,13 @@ class MCPServerHTTP(MCPServer):
         ]
     ]:
         if self._use_streamable_http:
+            if not self._enable_server_push:
+                return _post_only_streamablehttp_client(  # type: ignore[no-any-return]
+                    url=self.url,
+                    headers=self.headers,
+                    timeout=timedelta(seconds=self._timeout),
+                    sse_read_timeout=timedelta(seconds=self._sse_read_timeout),
+                )
             return streamablehttp_client(  # type: ignore[no-any-return]
                 url=self.url,
                 headers=self.headers,
