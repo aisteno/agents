@@ -66,7 +66,9 @@ async def _post_only_streamablehttp_client(
 
     timeout_seconds = timeout.total_seconds() if isinstance(timeout, timedelta) else timeout
     sse_read_timeout_seconds = (
-        sse_read_timeout.total_seconds() if isinstance(sse_read_timeout, timedelta) else sse_read_timeout
+        sse_read_timeout.total_seconds()
+        if isinstance(sse_read_timeout, timedelta)
+        else sse_read_timeout
     )
 
     client = create_mcp_http_client(
@@ -75,7 +77,9 @@ async def _post_only_streamablehttp_client(
         auth=auth,
     )
 
-    read_stream_writer, read_stream = anyio.create_memory_object_stream[SessionMessage | Exception](0)
+    read_stream_writer, read_stream = anyio.create_memory_object_stream[SessionMessage | Exception](
+        0
+    )
     write_stream, write_stream_reader = anyio.create_memory_object_stream[SessionMessage](0)
     transport = StreamableHTTPTransport(url)
 
